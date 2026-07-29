@@ -1,0 +1,207 @@
+<input type="file" id="csvFileInput" accept=".csv">
+<button type="button" id="generateHtmlBtn">Generate HTML</button>
+
+<h3>Generated HTML</h3>
+<textarea id="generatedHtml" style="width:100%;height:500px;font-family:monospace;"></textarea>
+
+<script>
+(function () {
+  const fileInput = document.getElementById("csvFileInput");
+  const generateBtn = document.getElementById("generateHtmlBtn");
+  const output = document.getElementById("generatedHtml");
+
+  generateBtn.addEventListener("click", async () => {
+    const file = fileInput.files[0];
+
+    if (!file) {
+      alert("Please select a CSV file first.");
+      return;
+    }
+
+    const csvText = await file.text();
+    const records = parseCSV(csvText);
+    const html = buildTimetableHtml(records);
+
+    output.value = html;
+  });
+
+  function parseCSV(csvText) {
+    const rows = [];
+    let currentRow = [];
+    let currentValue = "";
+    let insideQuotes = false;
+
+    for (let i = 0; i < csvText.length; i++) {
+      const char = csvText[i];
+      const nextChar = csvText[i + 1];
+
+      if (char === '"' && insideQuotes && nextChar === '"') {
+        currentValue += '"';
+        i++;
+      } else if (char === '"') {
+        insideQuotes = !insideQuotes;
+      } else if (char === "," && !insideQuotes) {
+        currentRow.push(currentValue);
+        currentValue = "";
+      } else if ((char === "\n" || char === "\r") && !insideQuotes) {
+        if (char === "\r" && nextChar === "\n") {
+          i++;
+        }
+
+        currentRow.push(currentValue);
+
+        if (currentRow.some(value => value.trim() !== "")) {
+          rows.push(currentRow);
+        }
+
+        currentRow = [];
+        currentValue = "";
+      } else {
+        currentValue += char;
+      }
+    }
+
+    if (currentValue !== "" || currentRow.length > 0) {
+      currentRow.push(currentValue);
+
+      if (currentRow.some(value => value.trim() !== "")) {
+        rows.push(currentRow);
+      }
+    }
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    const headers = rows[0].map(header => header.trim());
+    const dataRows = rows.slice(1);
+
+    return dataRows.map(row => {
+      const record = {};
+
+      headers.forEach((header, index) => {
+        record[header] = row[index] ? row[index].trim() : "";
+      });
+
+      return record;
+    });
+  }
+
+  function buildTimetableHtml(records) {
+    const groupedRecords = groupBy(records, "group_name");
+    let html = "";
+
+    Object.keys(groupedRecords).forEach(groupName => {
+      const rows = groupedRecords[groupName];
+
+      html += `<details style="background-color:#EAEAEA;border:0;" closed="" open="">\n`;
+      html += `    <summary>${escapeHtml(groupName)}</summary>\n`;
+      html += `    <table style="font-size:15px;" border="1" cellpadding="1" cellspacing="1">\n`;
+      html += `        <tbody>\n`;
+      html += `            <tr>\n`;
+      html += `                <td class="text-align-center" style="background-color:rgb(0, 82, 155);border-color:rgb(255, 255, 255);color:rgb(255, 255, 255);width:435px;">\n`;
+      html += `                    <p>\n`;
+      html += `                        File\n`;
+      html += `                    </p>\n`;
+      html += `                </td>\n`;
+      html += `                <td class="text-align-center" style="background-color:rgb(0, 82, 155);border-color:rgb(255, 255, 255);color:rgb(255, 255, 255);width:280px;">\n`;
+      html += `                    <p>\n`;
+      html += `                        Effective Date\n`;
+      html += `                    </p>\n`;
+      html += `                </td>\n`;
+      html += `            </tr>\n`;
+
+      rows.forEach(record => {
+        const mediaUrl = normalizeMediaUrl(record.media_url || "");
+        const busStopName = record.bus_stop_name || "";
+        const effectiveDate = record.effective_date || "";
+
+        html += `            <tr>\n`;
+        html += `                <td style="border-color:rgb(255, 255, 255);width:435px;">\n`;
+        html += `                    <p>\n`;
+        html += `                        <em><i class="fa" style="color:red;font-size:15px;"></i></em>&nbsp;<a href="${escapeAttribute(mediaUrl)}">${escapeHtml(busStopName)}</a>\n`;
+        html += `                    </p>\n`;
+        html += `                </td>\n`;
+        html += `                <td class="text-align-center" style="border-color:rgb(255, 255, 255);width:280px;">\n`;
+        html += `                    <p>\n`;
+        html += `                        ${escapeHtml(effectiveDate)}\n`;
+        html += `                    </p>\n`;
+        html += `                </td>\n`;
+        html += `            </tr>\n`;
+      });
+
+      html += `        </tbody>\n`;
+      html += `    </table>\n`;
+      html += `</details>\n\n`;
+    });
+
+    return html.trim();
+  }
+
+  function groupBy(records, fieldName) {
+    return records.reduce((groups, record) => {
+      const groupName = record[fieldName] || "Ungrouped";
+
+      if (!groups[groupName]) {
+        groups[groupName] = [];
+      }
+
+      groups[groupName].push(record);
+
+      return groups;
+    }, {});
+  }
+
+  function normalizeMediaUrl(url) {
+    if (!url) {
+      return "";
+    }
+
+    /*
+      Converts:
+      https://www.samtrans.com/media/23860
+      https://www.samtrans.com/media/23860/
+      https://www.samtrans.com/media/23860/download
+
+      To:
+      /media/23860
+
+      Keeps other external URLs unchanged.
+    */
+
+    try {
+      const parsedUrl = new URL(url);
+
+      if (
+        parsedUrl.hostname === "www.samtrans.com" ||
+        parsedUrl.hostname === "samtrans.com"
+      ) {
+        const mediaMatch = parsedUrl.pathname.match(/^\/media\/([^/]+)/);
+
+        if (mediaMatch) {
+          return `/media/${mediaMatch[1]}`;
+        }
+      }
+
+      return url;
+    } catch (error) {
+      return url;
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function escapeAttribute(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+})();
+</script>
